@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <base target="_top">
+    <meta charset="UTF-8">
+    <title>Leitor de transações - Versão 1.0</title>
+    <style>
+        body { font-family: 'Segoe UI', Arial, sans-serif; background: #eaedf1; padding: 20px; margin: 0; color: #333; }
+        .container { max-width: 1750px; margin: 20px auto; background: white; padding: 25px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { border-bottom: 2px solid #bfa15f; padding-bottom: 5px; color: #1e3a5f; text-transform: uppercase; font-size: 1.1em; margin-top: 20px; font-weight: 700; letter-spacing: 0.5px; }
+        textarea { width: 100%; height: 120px; border: 1px solid #ced4da; border-radius: 4px; padding: 12px; background: #fafafa; margin-bottom: 10px; font-family: 'Consolas', monospace; font-size: 13px; box-sizing: border-box; }
+        textarea:focus { border-color: #bfa15f; outline: none; }
+        .btn-group { display: flex; gap: 10px; align-items: center; margin: 15px 0; }
+        button { padding: 12px 22px; border: none; border-radius: 4px; font-weight: bold; cursor: pointer; text-transform: uppercase; font-size: 0.85em; transition: all 0.2s ease-in-out; }
+        .btn-ia { background: #343a40; color: white; } .btn-ia:hover { background: #23272b; }
+        .btn-save { background: #218838; color: white; } .btn-save:hover { background: #155724; }
+        button:disabled { opacity: 0.5; cursor: wait; }
+        .table-res { overflow-x: auto; border: 1px solid #ddd; border-radius: 4px; margin-top: 15px; }
+        table { width: 100%; border-collapse: collapse; font-size: 0.88em; background-color: #ffffff; }
+        th { background: #f8f9fa; padding: 12px; text-align: left; border-bottom: 2px solid #dee2e6; color: #666; font-size: 0.72em; text-transform: uppercase; }
+        td { padding: 3px; border-bottom: 1px solid #eee; }
+        input { width: 100%; border: 1px solid transparent; padding: 6px; box-sizing: border-box; background: transparent; font-size: 1.05em; transition: border-color 0.15s ease-in-out; }
+        input:focus { border-color: #bfa15f; background: white; outline: none; }
+        .neg { color: #d9534f; font-weight: bold; } .pos { color: #218838; font-weight: bold; }
+        .manual-field { background: #fffcf0 !important; border: 1px dashed #ffd6a5 !important; }
+        #loader { display: none; margin-left: 10px; font-weight: bold; color: #1e3a5f; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h2>1. Entrada de Dados Brutos (Contracheque ou Subcategorias)</h2>
+    <textarea id="rawInput" placeholder="Ex: Aluguel&#10;R$ 610,00  02/05/2025  Referente ao Mês 4  PicPay 65091183-0/1  02/05/2025"></textarea>
+    <div class="btn-group">
+        <button id="btnProc" class="btn-ia" onclick="processar()">Analisar de Forma Precisa</button>
+        <div id="loader">Processando com OpenAI GPT-OSS-120B via Groq...</div>
+    </div>
+
+    <div class="table-res">
+        <table>
+            <thead>
+                <tr>
+                    <th>Data</th><th>Entradas/Saídas</th><th>Valor</th><th>Descrição Literal</th><th>Categoria</th><th>Subcategoria</th><th>Essencialidade</th><th>Comport.</th><th>Recorr.</th>
+                </tr>
+            </thead>
+            <tbody id="corpoTabela"></tbody>
+        </table>
+    </div>
+    
+    <div style="margin-top:25px; display:flex; gap:15px; align-items:flex-end; background:#f8f9fa; padding:15px; border: 1px solid #eee; border-radius: 5px;">
+        <div style="flex-grow:1;">
+            <label style="font-size:10px; font-weight:bold; display:block; margin-bottom:5px; text-transform: uppercase;">ID DA PLANILHA GOOGLE SHEETS</label>
+            <input type="text" id="idPlanilha" style="background:white; padding:10px; border:1px solid #ccc; border-radius:4px;" placeholder="Digite o ID do Google Sheets de Controle">
+        </div>
+        <button onclick="salvar()" class="btn-save" id="btnSalvar">Confirmar e Gravar na Planilha</button>
+    </div>
+</div>
+
+<script>
+    window.onload = () => {
+        try {
+            google.script.run.withSuccessHandler(id => {
+                document.getElementById('idPlanilha').value = id || "";
+            }).getSavedSpreadsheetId();
+        } catch(e) {
+            console.warn("Ambiente local detectado ou sem comunicação de ambiente GSheets.");
+        }
+    };
+
+    function parseNumericString(valStr) {
+        let cleaned = String(valStr).replace('R$', '').replace(/\s/g, '');
+        if (cleaned.includes(',') && cleaned.includes('.')) {
+            cleaned = cleaned.replace(/\./g, '');
+        }
+        cleaned = cleaned.replace(',', '.');
+        return parseFloat(cleaned) || 0;
+    }
+
+    function processar() {
+        const input = document.getElementById('rawInput').value;
+        if(!input.trim()) return alert("Adicione o fluxo textual para análise.");
+        const btn = document.getElementById('btnProc');
+        const loader = document.getElementById('loader');
+        
+        btn.disabled = true; 
+        loader.style.display = "inline";
+
+        try {
+            google.script.run
+                .withSuccessHandler(dados => {
+                    btn.disabled = false; loader.style.display = "none";
+                    const corpo = document.getElementById('corpoTabela');
+                    corpo.innerHTML = "";
+                    
+                    dados.forEach(item => {
+                        const parsedVal = parseNumericString(item.valor);
+                        const validationClass = (item.categoria === "Receita") ? "" : "manual-field";
+                        corpo.innerHTML += `<tr>
+                            <td><input value="${item.data || ''}"></td>
+                            <td><input value="${item['Entradas/Saídas'] || ''}"></td>
+                            <td><input class="${parsedVal < 0 ? 'neg' : 'pos'}" value="${parsedVal.toFixed(2)}"></td>
+                            <td><input value="${item.descricao || ''}"></td>
+                            <td><input value="${item.categoria || ''}"></td>
+                            <td><input value="${item.subcategoria || ''}"></td>
+                            <td><input class="${validationClass}" value="${item.essencialidade || ''}"></td>
+                            <td><input class="${validationClass}" value="${item.comportamento || ''}"></td>
+                            <td><input class="${validationClass}" value="${item.recorrencia || ''}"></td>
+                        </tr>`;
+                    });
+                })
+                .withFailureHandler(err => {
+                    btn.disabled = false; loader.style.display = "none";
+                    alert(err.message);
+                }).processarFinanceiro(input);
+        } catch (e) {
+            btn.disabled = false; loader.style.display = "none";
+            alert("Exception na inicialização do callback do Apps Script: " + e.message);
+        }
+    }
+
+    function salvar() {
+        const id = document.getElementById('idPlanilha').value;
+        const btn = document.getElementById('btnSalvar');
+        if(!id) return alert("Insira o identificador de destino do Google Sheets.");
+        btn.disabled = true; btn.innerText = "Aguarde Gravando...";
+        
+        const linhas = Array.from(document.querySelectorAll('#corpoTabela tr')).map(tr => {
+            const inp = tr.querySelectorAll('input');
+            return {
+                data: inp[0].value, 
+                "Entradas/Saídas": inp[1].value, 
+                valor: inp[2].value,
+                descricao: inp[3].value, 
+                categoria: inp[4].value, 
+                subcategoria: inp[5].value,
+                essencialidade: inp[6].value, 
+                comportamento: inp[7].value, 
+                recorrencia: inp[8].value
+            };
+        });
+        
+        try {
+            google.script.run.withSuccessHandler(() => {
+                alert("Operação concluída!"); btn.disabled = false; btn.innerText = "Confirmar e Gravar";
+                document.getElementById('corpoTabela').innerHTML = "";
+                document.getElementById('rawInput').value = "";
+            }).withFailureHandler(err => {
+                alert(err); btn.disabled = false; btn.innerText = "Confirmar e Gravar";
+            }).salvarTransacoes(linhas, id);
+        } catch(e) {
+            btn.disabled = false; btn.innerText = "Confirmar e Gravar";
+            alert("Erro durante gravação cliente-servidor: " + e.message);
+        }
+    }
+</script>
+</body>
+</html>
